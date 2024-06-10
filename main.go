@@ -79,10 +79,22 @@ type columns struct {
 	subquery *Query
 	alias    string
 }
-
+type where struct {
+	left  string
+	right string
+	ttype string
+}
+type join struct {
+	table    string
+	subquery *Query
+	alias    string
+	exp      *where
+}
 type baseQuery struct {
 	fromSources *fromSources
 	columns     []*columns
+	where       []*where
+	join        []*join
 	alias       string
 }
 
@@ -106,7 +118,8 @@ func subQuery(_node *node) []*Query {
 
 				} else {
 					deep(t.nextnext, t.next.next.token)
-					str = append(str, "@subquery "+t.next.next.token+" ")
+					str = append(str, "@subquery")
+					str = append(str, t.next.next.token)
 				}
 				t = t.next.next.next
 			} else {
@@ -192,6 +205,29 @@ func buildQuery(item *Query, alias string) baseQuery {
 		}
 	}
 	base.columns = tc
+
+	var tw []*where
+	for i := 0; i < len(node.whereClauses); i++ {
+		tw = append(tw, &where{left: node.whereClauses[i], right: node.whereClauses[i+2], ttype: node.whereClauses[i+1]})
+		i++
+		i++
+	}
+	base.where = tw
+
+	var tj []*join
+	for i := 0; i < len(node.joins); i++ {
+		tj = append(tj, &join{
+			table: node.joins[i],
+			alias: node.joins[i+1],
+			exp:   &where{left: node.joins[i+3], ttype: node.joins[i+4], right: node.joins[i+5]},
+		})
+		i++
+		i++
+		i++
+		i++
+		i++
+	}
+	base.join = tj
 	return base
 }
 func indexOf(arr []string, need string) int {
@@ -204,33 +240,11 @@ func indexOf(arr []string, need string) int {
 }
 
 func eval(aquery string, arr []baseQuery, _table map[string]*table) string {
-	var aa baseQuery
-	for _, t := range arr {
-		if t.alias == aquery {
-			aa = t
-		}
-	}
-
-	var deep func(a baseQuery) string
-	deep = func(a baseQuery) string {
-		row := ""
-		for i := 0; i < len(_table[a.fromSources.table].row); i++ {
-			for _, c := range a.columns {
-				if c.col == "@subquery" {
-					//todo
-					row += eval(c.alias, arr, _table)
-				} else {
-					row += " " + _table[a.fromSources.table].row[i][indexOf(_table[a.fromSources.table].cols, c.col)]
-				}
-			}
-			row += "\n"
-		}
-		return row
-	}
-	return deep(aa)
+	// todo
+	return ""
 }
 func main() {
-	sql := "( SELECT id ( SELECT login FROM users u ) as kek FROM posts p )"
+	sql := "( SELECT * FROM diaries a JOIN ( SELECT * FROM posts p ) gg ON a.id = gg.di where a.id = 1337 )"
 	_table := make(map[string]*table)
 	_table["POSTS"] = &table{
 		cols: []string{"ID", "USER_ID"},
@@ -246,7 +260,6 @@ func main() {
 	for _, item := range b {
 		queries = append(queries, buildQuery(item, item.alias))
 	}
+
 	fmt.Print(1)
-	f := (eval(queries[0].alias, queries, _table))
-	fmt.Print(f)
 }
