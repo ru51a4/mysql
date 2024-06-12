@@ -54,41 +54,44 @@ func lexer(str string) *node {
 	return res
 }
 
+type ttoken struct {
+	str       string
+	subquery  *Query
+	_subQuery *baseQuery
+}
+
 type Query struct {
-	tokens *[]string
+	tokens *[]ttoken
 	alias  string
 }
 
 type tQuery struct {
-	columns        []string
-	fromSources    []string
-	joins          []string
-	whereClauses   []string
-	havingClauses  []string
-	groupByColumns []string
-	sortColumns    []string
-	limit          []string
+	columns        []ttoken
+	fromSources    []ttoken
+	joins          []ttoken
+	whereClauses   []ttoken
+	havingClauses  []ttoken
+	groupByColumns []ttoken
+	sortColumns    []ttoken
+	limit          []ttoken
 }
 type fromSources struct {
-	table    string
-	subquery *Query
-	alias    string
+	table ttoken
+	alias string
 }
 type columns struct {
-	col      string
-	subquery *Query
-	alias    string
+	col   ttoken
+	alias string
 }
 type where struct {
-	left  string
-	right string
-	ttype string
+	left  ttoken
+	right ttoken
+	ttype ttoken
 }
 type join struct {
-	table    string
-	subquery *Query
-	alias    string
-	exp      *where
+	table ttoken
+	alias string
+	exp   *where
 }
 type baseQuery struct {
 	fromSources *fromSources
@@ -100,9 +103,9 @@ type baseQuery struct {
 
 func subQuery(_node *node) []*Query {
 	var res []*Query
-	var deep func(node *node, alias string)
-	deep = func(node *node, alias string) {
-		var str []string
+	var deep func(node *node, alias string) Query
+	deep = func(node *node, alias string) Query {
+		var str []ttoken
 		query := Query{
 			tokens: &str,
 			alias:  alias,
@@ -112,28 +115,33 @@ func subQuery(_node *node) []*Query {
 		for t.next != nil {
 			if t.nextnext != nil {
 				if t.next.next.token == "AS" {
-					deep(t.nextnext, t.next.next.next.token)
-					str = append(str, "@subquery")
-					str = append(str, "AS")
+					st := deep(t.nextnext, t.next.next.next.token)
+					str = append(str, ttoken{
+						subquery: &st,
+					})
+					str = append(str, ttoken{str: "AS"})
 
 				} else {
-					deep(t.nextnext, t.next.next.token)
-					str = append(str, "@subquery")
-					str = append(str, t.next.next.token)
+					st := deep(t.nextnext, t.next.next.token)
+					str = append(str, ttoken{
+						subquery: &st,
+					})
+					str = append(str, ttoken{str: t.next.next.token})
 				}
 				t = t.next.next.next
 			} else {
-				str = append(str, t.token)
+				str = append(str, ttoken{str: t.token})
 				t = t.next
 			}
 
 		}
+		return query
 	}
 	deep(_node.next.nextnext, "main")
 	return res
 }
 
-func buildQuery(item *Query, alias string) baseQuery {
+func buildQuery(b []*Query, item *Query, alias string) baseQuery {
 	node := tQuery{}
 	tokens := *item.tokens
 	isColumns := false
@@ -141,29 +149,45 @@ func buildQuery(item *Query, alias string) baseQuery {
 	isJoin := false
 	isWhere := false
 	for i := 0; i < len(tokens); i++ {
-		if tokens[i] == "SELECT" {
+		if tokens[i].str == "SELECT" {
 			isColumns = true
 			continue
 		}
-		if tokens[i] == "FROM" {
+		if tokens[i].str == "FROM" {
 			isColumns = false
 			isFromSources = true
 			continue
 		}
-		if tokens[i] == "JOIN" {
+		if tokens[i].str == "JOIN" {
 			isJoin = true
 			isColumns = false
 			isFromSources = false
 			continue
 		}
-		if tokens[i] == "WHERE" {
+		if tokens[i].str == "WHERE" {
 			isJoin = false
 			isColumns = false
 			isFromSources = false
 			isWhere = true
 			continue
 		}
-		if tokens[i] == "" {
+		if tokens[i].subquery == nil && tokens[i].str == "" {
+			continue
+		}
+		if tokens[i].subquery != nil {
+			_subQuery := buildQuery(b, tokens[i].subquery, tokens[i].subquery.alias)
+			if isColumns {
+				node.columns = append(node.columns, ttoken{_subQuery: &_subQuery})
+			}
+			if isFromSources {
+				node.fromSources = append(node.fromSources, ttoken{_subQuery: &_subQuery})
+			}
+			if isJoin {
+				node.joins = append(node.joins, ttoken{_subQuery: &_subQuery})
+			}
+			if isWhere {
+				node.whereClauses = append(node.whereClauses, ttoken{_subQuery: &_subQuery})
+			}
 			continue
 		}
 		if isColumns {
@@ -185,16 +209,16 @@ func buildQuery(item *Query, alias string) baseQuery {
 	t := fromSources{}
 	for i := 0; i < len(node.fromSources); i++ {
 		t.table = node.fromSources[i]
-		t.alias = node.fromSources[i+1]
+		t.alias = node.fromSources[i+1].str
 		i++
 	}
 	base.fromSources = &t
 	var tc []*columns
 	for i := 0; i < len(node.columns); i++ {
-		if i+1 < len(node.columns) && node.columns[i+1] == "AS" {
+		if i+1 < len(node.columns) && node.columns[i+1].str == "AS" {
 			tc = append(tc, &columns{
 				col:   node.columns[i],
-				alias: node.columns[i+2],
+				alias: node.columns[i+2].str,
 			})
 			i++
 			i++
@@ -218,7 +242,7 @@ func buildQuery(item *Query, alias string) baseQuery {
 	for i := 0; i < len(node.joins); i++ {
 		tj = append(tj, &join{
 			table: node.joins[i],
-			alias: node.joins[i+1],
+			alias: node.joins[i+1].str,
 			exp:   &where{left: node.joins[i+3], ttype: node.joins[i+4], right: node.joins[i+5]},
 		})
 		i++
@@ -256,10 +280,7 @@ func main() {
 	}
 	a := lexer(sql)
 	b := subQuery(a)
-	var queries []baseQuery
-	for _, item := range b {
-		queries = append(queries, buildQuery(item, item.alias))
-	}
+	tree := buildQuery(b, b[0], "main")
 
-	fmt.Print(1)
+	fmt.Print(tree)
 }
