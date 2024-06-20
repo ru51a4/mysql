@@ -58,8 +58,13 @@ type ttoken struct {
 	str       string
 	subquery  *Query
 	_subQuery *baseQuery
+	_func     *_func
 }
-
+type _func struct {
+	opertator string
+	alias     string
+	args      *[]ttoken
+}
 type Query struct {
 	tokens *[]ttoken
 	alias  string
@@ -82,6 +87,7 @@ type fromSources struct {
 type columns struct {
 	col   ttoken
 	alias string
+	_func *_func
 }
 type where struct {
 	left  ttoken
@@ -103,6 +109,37 @@ type baseQuery struct {
 
 func subQuery(_node *node) []*Query {
 	var res []*Query
+
+	var buildFunc func(node *node, alias string, operator string) _func
+	buildFunc = func(node *node, alias string, operator string) _func {
+		var str []ttoken
+
+		query := _func{
+			opertator: operator,
+			alias:     alias,
+			args:      &str,
+		}
+		t := node
+		for t.next != nil {
+			if t.nextnext != nil {
+				if t.nextnext.next == nil || t.nextnext.next.next == nil || t.nextnext.next.next.token != "SELECT" {
+					ft := buildFunc(t.nextnext, "", t.nextnext.token)
+					str = append(str, ttoken{_func: &ft})
+					t = t.next
+				}
+			} else {
+				//todo
+				if t.next.token != "" {
+					str = append(str, ttoken{str: t.next.token})
+				}
+				t = t.next
+			}
+		}
+
+		return query
+
+	}
+
 	var deep func(node *node, alias string) Query
 	deep = func(node *node, alias string) Query {
 		var str []ttoken
@@ -114,6 +151,12 @@ func subQuery(_node *node) []*Query {
 		t := node
 		for t.next != nil {
 			if t.nextnext != nil {
+				if t.nextnext.next == nil || t.nextnext.next.next == nil || t.nextnext.next.next.token != "SELECT" {
+					ft := buildFunc(t.nextnext, "", t.nextnext.token)
+					str = append(str, ttoken{_func: &ft})
+					t = t.next
+					continue
+				}
 				if t.next.next.token == "AS" {
 					st := deep(t.nextnext, t.next.next.next.token)
 					str = append(str, ttoken{
@@ -171,7 +214,7 @@ func buildQuery(b []*Query, item *Query, alias string) baseQuery {
 			isWhere = true
 			continue
 		}
-		if tokens[i].subquery == nil && tokens[i].str == "" {
+		if tokens[i].subquery == nil && tokens[i].str == "" && tokens[i]._func == nil {
 			continue
 		}
 		if tokens[i].subquery != nil {
@@ -219,12 +262,14 @@ func buildQuery(b []*Query, item *Query, alias string) baseQuery {
 			tc = append(tc, &columns{
 				col:   node.columns[i],
 				alias: node.columns[i+2].str,
+				_func: node.columns[i]._func,
 			})
 			i++
 			i++
 		} else {
 			tc = append(tc, &columns{
-				col: node.columns[i],
+				col:   node.columns[i],
+				_func: node.columns[i]._func,
 			})
 		}
 	}
@@ -268,7 +313,7 @@ func eval(aquery string, arr []baseQuery, _table map[string]*table) string {
 	return ""
 }
 func main() {
-	sql := "( SELECT * FROM diaries a JOIN ( SELECT * FROM posts p ) gg ON a.id = gg.di where a.id = 1337 )"
+	sql := "( SELECT id, max(id) FROM diaries a JOIN ( SELECT id, max(max(id)) FROM posts p ) gg ON a.id = gg.di where a.id = 1337 )"
 	_table := make(map[string]*table)
 	_table["POSTS"] = &table{
 		cols: []string{"ID", "USER_ID"},
