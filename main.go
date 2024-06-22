@@ -262,7 +262,6 @@ func buildQuery(b []*Query, item *Query, alias string) baseQuery {
 			tc = append(tc, &columns{
 				col:   node.columns[i],
 				alias: node.columns[i+2].str,
-				_func: node.columns[i]._func,
 			})
 			i++
 			i++
